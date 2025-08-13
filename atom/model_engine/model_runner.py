@@ -165,7 +165,18 @@ class ModelRunner:
         positions = []
         slot_mapping = []
         context_lens = []
+        cu_seqlens_q = [0]
+        cu_seqlens_k = [0]
+        max_seqlen_q = 1
+        max_seqlen_k = 0
+
         for seq in seqs:
+            current_seq_len = len(seq)
+            cu_seqlens_q.append(cu_seqlens_q[-1] + 1)
+
+            cu_seqlens_k.append(cu_seqlens_k[-1] + current_seq_len)
+            max_seqlen_k = max(current_seq_len, max_seqlen_k)
+            
             input_ids.append(seq.last_token)
             positions.append(len(seq))
             context_lens.append(len(seq))
@@ -175,7 +186,12 @@ class ModelRunner:
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         context_lens = torch.tensor(context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         block_tables = self.prepare_block_tables(seqs)
-        set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables)
+        cu_seqlens_q = torch.tensor(cu_seqlens_q, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
+        cu_seqlens_k = torch.tensor(cu_seqlens_k, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
+
+        set_context(False, cu_seqlens_q=cu_seqlens_q, cu_seqlens_k=cu_seqlens_k,
+                max_seqlen_q=max_seqlen_q, max_seqlen_k=max_seqlen_k, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables)
+
         return input_ids, positions
 
     def prepare_sample(self, seqs: list[Sequence]):
@@ -225,13 +241,29 @@ class ModelRunner:
         context_lens = torch.zeros(max_bs, dtype=torch.int32)
         block_tables = torch.zeros(max_bs, max_num_blocks, dtype=torch.int32)
         outputs = torch.zeros(max_bs, hf_config.hidden_size)
+
+        cu_seqlens_q = torch.arange(max_bs + 1, dtype=torch.int32)
+        cu_seqlens_k = torch.arange(max_bs + 1, dtype=torch.int32)
+        max_seqlen_q = 1
+        max_seqlen_k = 1
+
         self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
         self.graphs = {}
         self.graph_pool = None
 
         for bs in reversed(self.graph_bs):
             graph = torch.cuda.CUDAGraph()
-            set_context(False, slot_mapping=slot_mapping[:bs], context_lens=context_lens[:bs], block_tables=block_tables[:bs])
+
+            current_max_seqlen_k = context_lens[:bs].max().item() if bs > 0 else 1
+
+            set_context(False, 
+                    cu_seqlens_q=cu_seqlens_q[:bs+1], 
+                    cu_seqlens_k=cu_seqlens_k[:bs+1],
+                    max_seqlen_q=max_seqlen_q,
+                    max_seqlen_k=current_max_seqlen_k,
+                    slot_mapping=slot_mapping[:bs], context_lens=context_lens[:bs], block_tables=block_tables[:bs])
+            # set_context(False, slot_mapping=slot_mapping[:bs], context_lens=context_lens[:bs], block_tables=block_tables[:bs])
+
             outputs[:bs] = self.model(input_ids[:bs], positions[:bs])    # warmup
             with torch.cuda.graph(graph, self.graph_pool):
                 outputs[:bs] = self.model(input_ids[:bs], positions[:bs])    # capture

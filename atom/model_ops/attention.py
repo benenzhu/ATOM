@@ -5,6 +5,7 @@ import triton.language as tl
 
 import aiter
 from atom.utils.context import get_context
+from flash_attn import flash_attn_with_kvcache
 
 
 @triton.jit
@@ -70,7 +71,7 @@ class Attention(nn.Module):
         v = v.view(-1, self.num_kv_heads, self.head_dim)
         context = get_context()
         k_cache, v_cache = self.k_cache, self.v_cache
-        if k_cache.numel() and v_cache.numel():
+        if k_cache.numel() and v_cache.numel() and context.slot_mapping is not None:
             store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
         if context.is_prefill:
             if context.block_tables is not None:  # prefix cache
@@ -79,15 +80,31 @@ class Attention(nn.Module):
                 q,
                 k,
                 v,
-                max_seqlen_q=context.max_seqlen_q,
                 cu_seqlens_q=context.cu_seqlens_q,
-                max_seqlen_k=context.max_seqlen_k,
                 cu_seqlens_k=context.cu_seqlens_k,
+                max_seqlen_q=context.max_seqlen_q,
+                max_seqlen_k=context.max_seqlen_k,
+                min_seqlen_q = 0,
+                dropout_p=0.0,
                 softmax_scale=self.scale,
                 causal=True,
             )
         else:  # decode
-            o = torch.empty_like(q, dtype=q.dtype, device=q.device)
+            # o = torch.empty_like(q, dtype=q.dtype, device=q.device)
+            o = aiter.flash_attn_varlen_func(
+                q=q,
+                k=k,
+                v=v,
+                cu_seqlens_q=context.cu_seqlens_q,
+                cu_seqlens_k=context.cu_seqlens_k,
+                max_seqlen_q=context.max_seqlen_q,
+                max_seqlen_k=context.max_seqlen_k,
+                min_seqlen_q = 0,
+                dropout_p=0.0,
+                softmax_scale=self.scale,
+                causal=True,
+            )
+
             # o = flash_attn_with_kvcache(q.unsqueeze(1), k_cache, v_cache,
             #                             cache_seqlens=context.context_lens, block_table=context.block_tables,
             #                             softmax_scale=self.scale, causal=True)
