@@ -52,7 +52,7 @@ class LLMEngine:
                 with_stack=True,
                 profile_memory=True,
                 on_trace_ready=torch_profiler.tensorboard_trace_handler(
-                    str(config.torch_profiler_dir)
+                    str(config.torch_profiler_dir), use_gzip=True
                 ),
             )
         )
