@@ -1,13 +1,13 @@
 import os
 from dataclasses import dataclass
 from transformers import AutoConfig
-from typing import List
+from typing import Optional
 from dataclasses import field
 
 
 @dataclass
 class CompilationConfig:
-    level: int = 3
+    level: int = 0
     """The level of compilation:
 
     - 0: no compilation.
@@ -17,15 +17,22 @@ class CompilationConfig:
     use_cudagraph: bool = field(default_factory=lambda: 0)
     local_cache_dir: str = field(default=None, init=False)  # type: ignore
     # cudagraph_capture_sizes: Optional[list[int]] = [1,2,4,8]
-    cudagraph_capture_sizes: List[int] = field(
-        default_factory=lambda: [1, 2, 4, 8]
-    )
+    cudagraph_capture_sizes: Optional[list[int]] = None
+
+    cuda_graph_sizes: list[int] = field(default_factory=list)
+    """Cuda graph capture sizes
+    1. if none provided, then default set to [min(max_num_seqs * 2, 512)]
+    2. if one value is provided, then the capture list would follow the
+    pattern: [1, 2, 4] + [i for i in range(8, cuda_graph_sizes + 1, 8)]
+    3. more than one value (e.g. 1 2 128) is provided, then the capture list
+    will follow the provided list."""
+
 
     def __post_init__(self):
-        if not isinstance(self.cudagraph_capture_sizes, list):
-            raise ValueError("cudagraph_capture_sizes must be list")
         if self.level not in {0, 1, 2, 3}:
             raise ValueError("level must in 0-3")
+        if not self.cuda_graph_sizes:
+            self.cuda_graph_sizes = [128]
 
 
 @dataclass

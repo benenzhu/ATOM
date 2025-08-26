@@ -371,7 +371,18 @@ class ModelRunner:
         outputs = torch.zeros(max_bs, hf_config.hidden_size)
 
         # self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
-        self.graph_bs = self.config.compilation_config.cudagraph_capture_sizes
+        self.graph_bs = []
+        if self.config.compilation_config.cudagraph_capture_sizes:
+            self.graph_bs = self.config.compilation_config.cudagraph_capture_sizes
+        else:
+            cuda_graph_sizes = self.config.compilation_config.cuda_graph_sizes
+            if len(cuda_graph_sizes) == 1:
+                self.graph_bs = [1, 2, 4, 8] + [
+                    i for i in range(64, cuda_graph_sizes[0] + 1, 64)
+                ]
+            elif len(cuda_graph_sizes) > 1:
+                self.graph_bs = sorted(cuda_graph_sizes)
+
 
         self.graphs = {}
         self.graph_pool = None
