@@ -2,10 +2,11 @@ import pickle
 import os
 import torch
 import torch.distributed as dist
+from aiter import dtypes
 from aiter import init_dist_env, destroy_dist_env
+from aiter.dist.parallel_state import graph_capture
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
-from aiter import dtypes
 from atom.config import Config
 from atom.model_engine.sequence import Sequence
 from atom.model_ops.sampler import Sampler
@@ -327,6 +328,7 @@ class ModelRunner:
         else:
             bs = input_ids.size(0)
             graph_bs = next(x for x in self.graph_bs if x >= bs)
+            assert graph_bs >= bs, f"current decode {bs=} > max graph_bs{graph_bs}"
 
             context = get_context()
             graph = self.graphs[graph_bs]
@@ -397,8 +399,10 @@ class ModelRunner:
             )
 
             outputs[:bs] = self.model(input_ids[:bs], positions[:bs])  # warmup
-            with torch.cuda.graph(graph, self.graph_pool):
-                outputs[:bs] = self.model(input_ids[:bs], positions[:bs])  # capture
+
+            with graph_capture() as gc:
+                with torch.cuda.graph(graph, self.graph_pool, stream=gc.stream):
+                    outputs[:bs] = self.model(input_ids[:bs], positions[:bs])  # capture
             if self.graph_pool is None:
                 self.graph_pool = graph.pool()
             self.graphs[bs] = graph
