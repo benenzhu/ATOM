@@ -389,7 +389,7 @@ class ModelRunner:
             cuda_graph_sizes = self.config.compilation_config.cuda_graph_sizes
             if len(cuda_graph_sizes) == 1:
                 self.graph_bs = [1, 2, 4, 8] + [
-                    i for i in range(64, cuda_graph_sizes[0] + 1, 64)
+                    i for i in range(16, cuda_graph_sizes[0] + 1, 16)
                 ]
             elif len(cuda_graph_sizes) > 1:
                 self.graph_bs = sorted(cuda_graph_sizes, reverse=True)

@@ -37,7 +37,7 @@ class CompilationConfig:
         if self.level not in {0, 1, 2, 3}:
             raise ValueError("level must in 0-3")
         if not self.cuda_graph_sizes:
-            self.cuda_graph_sizes = [128]
+            self.cuda_graph_sizes = [512]
 
 
 class QuantizationConfig(dict):
