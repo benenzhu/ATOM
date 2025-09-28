@@ -1,6 +1,7 @@
 import logging
 import time
 from dataclasses import fields
+from typing import List
 
 import torch.multiprocessing as mp
 from tqdm.auto import tqdm
@@ -39,18 +40,9 @@ class LLMEngine:
         # 2. add req to scheduler
         self.core_mgr.add_request(req)
 
-    def step(self):
-        # seqs, is_prefill = self.scheduler.schedule()
-        # token_ids = self.model_runner.call("run", seqs, is_prefill)
-        # self.scheduler.postprocess(seqs, token_ids)
-        # outputs = [
-        #     (seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished
-        # ]
-        # num_tokens = sum(len(seq) for seq in seqs) if is_prefill else -len(seqs)
-        # return outputs, num_tokens
-
-        seq = self.core_mgr.get_output()
-        return seq
+    def step(self) -> list[Sequence]:
+        seqs = self.core_mgr.get_output()
+        return seqs
 
     def is_finished(self):
         return not self.io_processor.has_pending_requests()
@@ -73,9 +65,9 @@ class LLMEngine:
         while not self.is_finished() and (
             self.core_mgr.is_alive() or self.core_mgr.is_rest()
         ):
-            seq = self.step()
-            out = self.io_processor.postprocess(seq)
-            outputs[seq.id] = out
+            seqs = self.step()
+            outs = self.io_processor.postprocess(seqs)
+            outputs.update(outs)
         # # Stop profiling for all ranks if enabled
         # if enable_profiling:
         #     self.model_runner.call("stop_profiler")
@@ -109,26 +101,30 @@ class InputOutputProcessor:
         )
         return seq
 
-    def postprocess(self, req: Sequence):
+    def postprocess(self, reqs: List[Sequence]):
         """responsible for:
         1) Compute stats for logging
         2) Detokenize"""
-        self.requests.pop(req.id)
-        output_str = self.tokenizer.decode(req.completion_token_ids)
-        req.leave_time = time.time()
-        print(
-            f"Request {req.id} finished with reason {req.leave_reason}. "
-            f"Input tokens: {req.num_prompt_tokens}, output tokens: {req.num_completion_tokens}, "
-            f"latency: {req.leave_time - req.arrive_time:.2f}s"
-        )
-        return {
-            "text": output_str,
-            "token_ids": req.completion_token_ids,
-            "latency": req.leave_time - req.arrive_time,
-            "finish_reason": req.leave_reason,
-            "num_tokens_input": req.num_prompt_tokens,
-            "num_tokens_output": req.num_completion_tokens,
-        }
+        outputs = {}
+        for req in reqs:
+            self.requests.pop(req.id)
+            # output_str = self.tokenizer.decode(req.completion_token_ids)
+            output_str = "self.tokenizer.decode(req.completion_token_ids)"
+            req.leave_time = time.time()
+            print(
+                f"Request {req.id} finished with reason {req.leave_reason}. "
+                f"Input tokens: {req.num_prompt_tokens}, output tokens: {req.num_completion_tokens}, "
+                f"latency: {req.leave_time - req.arrive_time:.2f}s"
+            )
+            outputs[req.id] = {
+                "text": output_str,
+                "token_ids": req.completion_token_ids,
+                "latency": req.leave_time - req.arrive_time,
+                "finish_reason": req.leave_reason,
+                "num_tokens_input": req.num_prompt_tokens,
+                "num_tokens_output": req.num_completion_tokens,
+            }
+        return outputs
 
     def has_pending_requests(self):
         return len(self.requests) > 0

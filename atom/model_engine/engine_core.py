@@ -5,7 +5,7 @@ import queue
 import threading
 import weakref
 from contextlib import ExitStack
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import zmq
 import zmq.asyncio
@@ -64,7 +64,7 @@ class EngineCore:
         logger.info("Engine core model runner loaded")
         self.scheduler = Scheduler(config)
         self.input_queue = queue.Queue[Sequence]()
-        self.output_queue = queue.Queue[Sequence]()
+        self.output_queue = queue.Queue[List[Sequence]]()
         self.input_address = input_address
         self.output_address = output_address
         logger.info(f"Engine core input address: {self.input_address}")
@@ -102,7 +102,7 @@ class EngineCore:
 
     def _send_engine_dead(self):
         logger.info("Send engine core dead signal")
-        self.output_queue.put_nowait(get_exit_sequence())
+        self.output_queue.put_nowait([get_exit_sequence()])
         self.output_thread.join(timeout=5.0)
 
     def busy_loop(self):
@@ -118,9 +118,9 @@ class EngineCore:
         scheduled_batchs = self.scheduler.schedule()
         token_ids = self.model_runner.call("run", scheduled_batchs)
         self.scheduler.postprocess(scheduled_batchs.seqs, token_ids)
-        for seq in scheduled_batchs.seqs:
-            if seq.is_finished:
-                self.output_queue.put_nowait(seq)
+        self.output_queue.put_nowait(
+            [seq for seq in scheduled_batchs.seqs if seq.is_finished]
+        )
 
     def _process_input_queue(self):
         while not self.input_queue.empty():
@@ -167,14 +167,18 @@ class EngineCore:
             logger.info("Engine core output socket connected")
 
             while True:
-                seq = self.output_queue.get()
-                if seq.status == SequenceStatus.EXIT_ENGINE:
+                seqs = self.output_queue.get()
+                valid_seqs = [
+                    seq for seq in seqs if seq.status != SequenceStatus.EXIT_ENGINE
+                ]
+                serialized_obj = pickle.dumps((EngineCoreRequestType.ADD, valid_seqs))
+                socket.send(serialized_obj)
+                num_valid = len(valid_seqs)
+                logger.info(f"Engine core output: {num_valid} sequences")
+                if len(valid_seqs) != len(seqs):
                     socket.send(pickle.dumps((EngineCoreRequestType.SHUTDOWN, None)))
                     logger.info("Engine core output thread closed")
                     break
-                serialized_obj = pickle.dumps((EngineCoreRequestType.ADD, seq))
-                socket.send(serialized_obj)
-                logger.info(f"Engine core output: {seq.id}")
 
     def start_profiler(self):
         if self.profile_enbaled:

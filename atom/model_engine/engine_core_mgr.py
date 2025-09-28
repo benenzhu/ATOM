@@ -4,6 +4,7 @@ import pickle
 import queue
 import weakref
 from threading import Thread
+from typing import List
 
 import zmq
 import zmq.asyncio
@@ -25,7 +26,7 @@ class CoreManager:
     def __init__(self, config: Config):
         sync_ctx = zmq.Context(io_threads=2)
         self.ctx = zmq.asyncio.Context(sync_ctx) if config.asyncio_mode else sync_ctx
-        self.outputs_queue = queue.Queue[Sequence]()
+        self.outputs_queue = queue.Queue[List[Sequence]]()
         engine_core_process, addresses = launch_engine_core(config)
         logger.info("Engine core inited")
         self.engine_core_process = engine_core_process
@@ -62,15 +63,15 @@ class CoreManager:
                         break
 
                     obj = self.output_socket.recv(copy=False)
-                    request_type, seq = pickle.loads(obj)
+                    request_type, seqs = pickle.loads(obj)
                     if request_type == EngineCoreRequestType.SHUTDOWN:
                         logger.info("Core client output thread receive shutdown signal")
                         self.engine_core_process.join()
                         self.engine_core_process = None
                         break
                     elif request_type == EngineCoreRequestType.ADD:
-                        logger.info(f"Engine core output sequence id: {seq.id}")
-                        self.outputs_queue.put_nowait(seq)
+                        # logger.info(f"Engine core output sequence id: {seq.id}")
+                        self.outputs_queue.put_nowait(seqs)
             finally:
                 # Close sockets.
                 shutdown_socket.close(linger=0)
@@ -120,12 +121,12 @@ class CoreManager:
     #     if self.engine_core_process is not None and self.engine_core_process.is_alive():
     #         shutdown_all_processes([self.engine_core_process])
 
-    def get_output(self) -> Sequence:
-        outputs = self.outputs_queue.get()
-        logger.info(f"Get output from engine core, sequence id: {outputs.id}")
+    def get_output(self) -> List[Sequence]:
+        seqs = self.outputs_queue.get()
+        # logger.info(f"Get output from engine core, sequence id: {outputs.id}")
         # if isinstance(outputs, Exception):
         #     raise outputs from None
-        return outputs
+        return seqs
 
     def is_rest(self):
         return not self.outputs_queue.empty()
