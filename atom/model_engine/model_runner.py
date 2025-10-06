@@ -20,7 +20,7 @@ from atom.model_ops.sampler import Sampler
 from atom.models.llama import LlamaForCausalLM
 from atom.models.mixtral import MixtralForCausalLM
 from atom.models.qwen3 import Qwen3ForCausalLM
-from atom.utils import CpuGpuBuffer
+from atom.utils import CpuGpuBuffer, init_exit_handler
 from atom.utils.context import get_context, reset_context, set_context
 
 logger = logging.getLogger("atom")
@@ -31,6 +31,62 @@ suppot_model_arch_dict = {
     "LlamaForCausalLM": LlamaForCausalLM,
     "MixtralForCausalLM": MixtralForCausalLM,
 }
+
+
+class OutputProcessor:
+
+    def __init__(self):
+        """Asynchronously copy the sampled_token_ids tensor to the host."""
+        # Event on the copy stream so we can synchronize the non-blocking copy.
+        self.async_copy_event = torch.cuda.Event()
+        self.async_copy_stream = torch.cuda.Stream()
+        self.deferred_request_id: list[list[int]] = []
+        self.deferred_token_id: list[list[int]] = []
+        self.token_ids_gpu: list[torch.Tensor] = []
+        self.token_ids_cpu: list[torch.Tensor] = []
+
+    def send_to_cpu_async(self, gpu_tensor: torch.Tensor):
+        default_stream = torch.cuda.current_stream()
+        with torch.cuda.stream(self.async_copy_stream):
+            self.async_copy_stream.wait_stream(default_stream)
+            cpu_tensor = gpu_tensor.to("cpu", non_blocking=True)
+            self.async_copy_event.record(self.async_copy_stream)
+        self.token_ids_gpu.append(gpu_tensor)
+        self.token_ids_cpu.append(cpu_tensor)
+
+    def recv_async_output(self) -> list[int]:
+        self.async_copy_event.synchronize()
+        for _ in self.token_ids_gpu:
+            token_ids = self.token_ids_cpu.pop(0).tolist()
+            return token_ids
+        return []
+
+    def update_and_ret(
+        self, batch: ScheduledBatchs, sampled_token_ids: torch.Tensor
+    ) -> list[int]:
+        token_ids = self.recv_async_output()
+        self.send_to_cpu_async(sampled_token_ids)
+        deferred_reqIDs = []
+        returned_reqIDs = []
+        for req in batch.seqs:
+            if req.id in self.deferred_request_id:
+                returned_reqIDs.append(req.id)
+            else:
+                deferred_reqIDs.append(req.id)
+
+        if returned_reqIDs:
+            for ids in self.token_ids_cpu[:-1]:
+                ids_list = ids.tolist()
+                for req_id in returned_reqIDs:
+                    self.deferred_request_id.remove(req_id)
+                    req_index = batch.unfinished_prev_req.index(req_id)
+                    batch.unfinished_prev_req.remove(req_id)
+                    req = batch.seqs[req_index]
+                    req.append_token(ids_list[req_index])
+
+        self.async_copy_event.synchronize()
+
+        return []
 
 
 class ModelRunner:
@@ -60,10 +116,11 @@ class ModelRunner:
         os.environ["MASTER_ADDR"] = self.config.master_addr
         os.environ["MASTER_PORT"] = str(self.config.port)
         init_dist_env(self.world_size, rankID=rank)
-        self.init_exit_handler()
+        init_exit_handler(self)
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype)
         torch.set_default_device("cuda")
+        self.out_processor = OutputProcessor()
         self.sampler = Sampler()
         self.model = suppot_model_arch_dict[hf_config.architectures[0]](config)
         load_model(self.model, config.model)
@@ -77,19 +134,6 @@ class ModelRunner:
         if self.config.compilation_config.level == 1:
             self.model = torch.compile(self.model, fullgraph=True, backend="eager")
 
-    def init_exit_handler(self):
-        logger.info(f"Initializing ModelRunner for rank {self.rank}")
-        self.still_running = True
-        self._finalizer = weakref.finalize(self, self.exit)
-
-        def signal_handler(signum, frame):
-            sig_name = signal.Signals(signum).name
-            msg = f"{self.label}: received signal {signum} ({sig_name}), exiting..."
-            logger.warning(msg)
-            self._finalizer()
-
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
 
     def exit(self):
         if not self.still_running:
@@ -386,7 +430,7 @@ class ModelRunner:
 
         return var["input_ids"].gpu[:bs], var["positions"].gpu[:bs]
 
-    def prepare_sample(self, seqs: list[Sequence]):
+    def prepare_sample(self, seqs: list[Sequence]) -> torch.Tensor:
         temperatures = [seq.temperature for seq in seqs]
         temperatures = torch.tensor(
             temperatures, dtype=torch.float32, pin_memory=True
@@ -414,15 +458,29 @@ class ModelRunner:
             self.graphs[graph_bs].replay()
             return self.model.compute_logits(self.decode_vars["outputs"][:bs])
 
-    @torch.inference_mode()
-    def forward(self, scheduled_batchs: ScheduledBatchs) -> Optional[list[int]]:
-        input_ids, positions, temperatures = self.prepare_model(scheduled_batchs)
-        logits = self.run_model(input_ids, positions, scheduled_batchs.is_prefill)
-        token_ids = (
-            self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
-        )
-        reset_context()
+    def postprocess(
+        self,
+        batch: ScheduledBatchs,
+        logits: torch.Tensor,
+        temperatures: Optional[torch.Tensor],
+    ) -> list[int]:
+        if self.rank == 0:
+            sampled_tokens = self.sampler(logits, temperatures)
+            token_ids = sampled_tokens.tolist()
+            # token_ids = self.prev_sampled.update_and_ret(
+            #     batch,
+            #     sampled_tokens,
+            # )
+        else:
+            token_ids = []
         return token_ids
+
+    @torch.inference_mode()
+    def forward(self, batch: ScheduledBatchs) -> list[int]:
+        input_ids, positions, temperatures = self.prepare_model(batch)
+        logits = self.run_model(input_ids, positions, batch.is_prefill)
+        reset_context()
+        return self.postprocess(batch, logits, temperatures)
 
     @torch.inference_mode()
     def capture_cudagraph(self):
