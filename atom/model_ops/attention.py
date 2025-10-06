@@ -1,3 +1,6 @@
+# from flash_attn import flash_attn_with_kvcache
+from dataclasses import dataclass
+
 import aiter
 import torch
 import triton
@@ -6,13 +9,14 @@ from aiter.paged_attn import PagedAttention
 from torch import nn
 
 from atom.utils.context import get_context
-
-# from flash_attn import flash_attn_with_kvcache
-from dataclasses import dataclass
-
-from atom.utils.context import get_context
 from atom.utils.custom_register import direct_register_custom_op
-from atom.utils.forward_context import ForwardContext, get_forward_context, AttentionMetadata, set_forward_context
+from atom.utils.forward_context import (
+    AttentionMetadata,
+    ForwardContext,
+    get_forward_context,
+    set_forward_context,
+)
+
 
 # Dynamo will not try to inspect any of the internal operations for prefill or decode
 # @torch.library.custom_op("aiter::unified_attention_with_output", mutates_args=["q", "k", "v", "k_cache", "v_cache", "k_scale", "v_scale"])

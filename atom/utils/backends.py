@@ -3,6 +3,7 @@
 
 import ast
 import dataclasses
+import logging
 import os
 import pprint
 import time
@@ -10,21 +11,28 @@ from collections.abc import Sequence
 from contextlib import contextmanager
 from typing import Any, Callable, Optional
 
-
 import torch
 import torch.fx as fx
 from torch._dispatch.python import enable_python_dispatcher
 
-from .compiler_inferface import InductorAdaptor, CompilerInterface, InductorStandaloneAdaptor
-from atom.utils import is_torch_equal_or_newer
-from aiter import logger
 from atom.config import CompilationConfig, Config, CUDAGraphMode
-from atom.utils import compilation_counter, resolve_obj_by_qualname
+from atom.utils import (
+    compilation_counter,
+    is_torch_equal_or_newer,
+    resolve_obj_by_qualname,
+)
+
+from .compiler_inferface import (
+    CompilerInterface,
+    InductorAdaptor,
+    InductorStandaloneAdaptor,
+)
+
+logger = logging.getLogger("atom")
 
 
 def get_static_graph_wrapper_cls(cls) -> str:
     return "atom.utils.cuda_graph.CUDAGraphWrapper"
-
 
 
 def make_compiler(compilation_config: CompilationConfig) -> CompilerInterface:
@@ -529,7 +537,7 @@ class VllmBackend:
         os.makedirs(cache_dir, exist_ok=True)
         self.compilation_config.cache_dir = cache_dir
         # rank = vllm_config.parallel_config.rank
-        rank = 0
+        rank = torch.cuda.current_device()
         # dp_rank = vllm_config.parallel_config.data_parallel_rank
         local_cache_dir = os.path.join(cache_dir, f"rank_{rank}",
                                        self.prefix)

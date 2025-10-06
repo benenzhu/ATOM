@@ -1,59 +1,59 @@
+import enum
+import hashlib
 import os
-import torch
 import re
-from dataclasses import dataclass
-from transformers import AutoConfig
-from typing import Optional, Any, ClassVar, Union
-from dataclasses import field
+from dataclasses import dataclass, field
+from typing import Any, ClassVar, Optional, Union
+
+import torch
 from aiter import QuantType
 from aiter.utility.dtypes import d_dtypes
 from transformers import AutoConfig, PretrainedConfig
-import enum
-import hashlib
 
 CUDA_CAPTURE = True
+
 
 def get_capture_status() -> bool:
     return CUDA_CAPTURE
 
+
 def set_capture_status(capture):
     global CUDA_CAPTURE
-    CUDA_CAPTURE =  capture
+    CUDA_CAPTURE = capture
 
 
 class CUDAGraphMode(enum.Enum):
-    """ Constants for the cudagraph mode in CompilationConfig.
+    """Constants for the cudagraph mode in CompilationConfig.
     Meanwhile, the subset enum `NONE`, `PIECEWISE` and `FULL` are also
     treated as concrete runtime mode for cudagraph runtime dispatching.
     """
+
     NONE = 0
     PIECEWISE = 1
     FULL = 2
     FULL_DECODE_ONLY = (FULL, NONE)
     FULL_AND_PIECEWISE = (FULL, PIECEWISE)
 
-    def decode_mode(self) -> 'CUDAGraphMode':
-        return CUDAGraphMode(self.value[0]) if \
-            self.separate_routine() else self
+    def decode_mode(self) -> "CUDAGraphMode":
+        return CUDAGraphMode(self.value[0]) if self.separate_routine() else self
 
-    def mixed_mode(self) -> 'CUDAGraphMode':
-        return CUDAGraphMode(self.value[1]) if \
-            self.separate_routine() else self
+    def mixed_mode(self) -> "CUDAGraphMode":
+        return CUDAGraphMode(self.value[1]) if self.separate_routine() else self
 
     def requires_piecewise_compilation(self) -> bool:
-        return (self.decode_mode() == CUDAGraphMode.PIECEWISE
-                or self.mixed_mode() == CUDAGraphMode.PIECEWISE)
+        return (
+            self.decode_mode() == CUDAGraphMode.PIECEWISE
+            or self.mixed_mode() == CUDAGraphMode.PIECEWISE
+        )
 
-    def max_cudagraph_mode(self) -> 'CUDAGraphMode':
-        return CUDAGraphMode(max(
-            self.value)) if self.separate_routine() else self
+    def max_cudagraph_mode(self) -> "CUDAGraphMode":
+        return CUDAGraphMode(max(self.value)) if self.separate_routine() else self
 
     def has_full_cudagraphs(self) -> bool:
         return self.max_cudagraph_mode() == CUDAGraphMode.FULL
 
     def separate_routine(self) -> bool:
         return isinstance(self.value, tuple)
-
 
 
 class CompilationLevel:
@@ -97,7 +97,7 @@ class CompilationConfig:
     cache_dir: str = ""
 
     use_inductor: bool = True
-    
+
     # CudaGraph compilation
     cudagraph_mode: Optional[CUDAGraphMode] = None
     """
@@ -145,7 +145,6 @@ class CompilationConfig:
 
     # splitting_ops: Optional[list[str]] = field(default_factory=list)
 
-
     cudagraph_copy_inputs: bool = False
     """Whether to copy input tensors for
     cudagraph. If the caller can guarantee that the same input buffers
@@ -157,8 +156,7 @@ class CompilationConfig:
 
     _attention_ops: ClassVar[list[str]] = [
         "aiter.unified_attention_with_output"
-
-        # "aiter.wrapper_fmha_v3_varlen_fwd",        
+        # "aiter.wrapper_fmha_v3_varlen_fwd",
         # "vllm.unified_attention",
         # "vllm.unified_attention_with_output",
         # "vllm.mamba_mixer2",
@@ -185,9 +183,10 @@ class CompilationConfig:
             self.compile_sizes = list(set(self.compile_sizes))
             for x in self.compile_sizes:
                 if isinstance(x, str):
-                    assert x == "cudagraph_capture_sizes", \
-                    "Unrecognized size type in compile_sizes, " \
-                    f"expect 'cudagraph_capture_sizes', got {x}"
+                    assert x == "cudagraph_capture_sizes", (
+                        "Unrecognized size type in compile_sizes, "
+                        f"expect 'cudagraph_capture_sizes', got {x}"
+                    )
                     computed_compile_sizes.extend(self.cudagraph_capture_sizes)
                 else:
                     assert isinstance(x, int)
@@ -220,13 +219,13 @@ class CompilationConfig:
         factors.append(self.cuda_graph_sizes)
         return hashlib.sha256(str(factors).encode()).hexdigest()
 
-
     def set_splitting_ops_for_v1(self):
         # NOTE: this function needs to be called only when level is
         # CompilationLevel.PIECEWISE
         assert self.level == CompilationLevel.PIECEWISE, (
             "set_splitting_ops_for_v1 should only be called when "
-            "level is CompilationLevel.PIECEWISE")
+            "level is CompilationLevel.PIECEWISE"
+        )
 
         if self.splitting_ops is None:
             # NOTE: When using full cudagraph, instead of setting an empty
@@ -238,10 +237,13 @@ class CompilationConfig:
             self.splitting_ops = self._attention_ops
 
 
-
 class QuantizationConfig(dict):
     def __init__(
-        self, quant_type=QuantType.No, quant_dtype=torch.bfloat16, is_dynamic=True, quant_name=""
+        self,
+        quant_type=QuantType.No,
+        quant_dtype=torch.bfloat16,
+        is_dynamic=True,
+        quant_name="",
     ):
         super().__init__()
         self["quant_type"] = quant_type if quant_type is not None else QuantType.No
@@ -341,7 +343,8 @@ class Config:
     gpu_memory_utilization: float = 0.9
     tensor_parallel_size: int = 1
     enforce_eager: bool = False
-    hf_config: AutoConfig | None = None
+    hf_config: PretrainedConfig = field(init=False)
+    bos_token_id: int = -1
     eos_token_id: int = -1
     kvcache_block_size: int = 16
     num_kvcache_blocks: int = -1
@@ -350,11 +353,12 @@ class Config:
     port: int = 8006
     torch_profiler_dir: str | None = os.getenv("ATOM_TORCH_PROFILER_DIR", None)
     compilation_config: CompilationConfig = field(default_factory=CompilationConfig)
-    quant_config: QuantizationConfig = field(default_factory=lambda: QuantizationConfig())
+    quant_config: QuantizationConfig = field(
+        default_factory=lambda: QuantizationConfig()
+    )
     asyncio_mode: bool = False
     master_addr: str = "127.0.0.1"
     graph_bs: Optional[list[int]] = None
-
 
     def _set_cudagraph_sizes(self):
         if self.compilation_config.cudagraph_capture_sizes:
@@ -387,7 +391,6 @@ class Config:
             self.compilation_config.cudagraph_mode = CUDAGraphMode.PIECEWISE
             self.compilation_config.init_with_cudagraph_sizes()
 
-
     def compute_hash(self) -> str:
         """
         WARNING: Whenever a new field is added to this config,
@@ -412,6 +415,7 @@ class Config:
 
         factors.append(vllm_factors)
 
-        hash_str = hashlib.md5(str(factors).encode(),
-                               usedforsecurity=False).hexdigest()[:10]
+        hash_str = hashlib.md5(
+            str(factors).encode(), usedforsecurity=False
+        ).hexdigest()[:10]
         return hash_str

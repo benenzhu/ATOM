@@ -23,6 +23,7 @@ class LLMEngine:
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
         config = Config(model, **config_kwargs)
         self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
+        config.bos_token_id = self.tokenizer.bos_token_id
         config.eos_token_id = self.tokenizer.eos_token_id
 
         self.rquest_ids = set()
