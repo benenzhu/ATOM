@@ -17,10 +17,10 @@ from atom.model_engine.scheduler import ScheduledBatchs
 from atom.model_engine.sequence import Sequence
 from atom.model_loader.loader import load_model
 from atom.model_ops.sampler import Sampler
+from atom.models.deepseek_v2 import DeepseekV2ForCausalLM
 from atom.models.llama import LlamaForCausalLM
 from atom.models.mixtral import MixtralForCausalLM
 from atom.models.qwen3 import Qwen3ForCausalLM
-from atom.models.deepseek_v2 import DeepseekV2ForCausalLM
 from atom.utils import CpuGpuBuffer, init_exit_handler
 from atom.utils.context import get_context, reset_context, set_context
 
