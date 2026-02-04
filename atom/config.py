@@ -536,6 +536,7 @@ class SpeculativeConfig:
 class Config:
     model: str
     max_num_batched_tokens: int = 16384
+    scheduler_delay_factor: float = 0.0
     max_num_seqs: int = 512
     max_model_len: int | None = None
     gpu_memory_utilization: float = 0.9
@@ -618,6 +619,13 @@ class Config:
             if getattr(self.hf_config, "torch_dtype", None) is not None
             else torch.bfloat16
         )
+
+        if self.speculative_config is not None:
+            if self.speculative_config.num_speculative_tokens != 1:
+                raise ValueError(
+                    f"num_speculative_tokens must be 1, got {self.speculative_config.num_speculative_tokens}. "
+                    "Only num_speculative_tokens=1 is currently supported."
+                )
 
     def compute_hash(self) -> str:
         """
