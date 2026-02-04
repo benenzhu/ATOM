@@ -8,6 +8,7 @@ import queue
 import threading
 from contextlib import ExitStack
 from typing import List
+import os
 
 import torch
 import zmq
@@ -66,7 +67,10 @@ class EngineCore:
         )
         self.input_thread.start()
 
+        if config.torch_profiler_dir is None:
+            config.torch_profiler_dir = os.getenv("ATOM_TORCH_PROFILER_DIR", None)
         self.profile_enbaled = config.torch_profiler_dir is not None
+        assert self.profile_enbaled, f"Profiler is not enabled, {os.getenv("ATOM_TORCH_PROFILER_DIR", None)}, {config.torch_profiler_dir=}"
         init_exit_handler(self)
         self._init_data_parallel(config)
 

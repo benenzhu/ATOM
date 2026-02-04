@@ -552,7 +552,8 @@ class Config:
     kv_cache_dtype: str = "bf16"
     enable_prefix_caching: bool = False
     port: int = 8006
-    torch_profiler_dir: str | None = os.getenv("ATOM_TORCH_PROFILER_DIR", None)
+    # torch_profiler_dir: str | None = os.getenv("ATOM_TORCH_PROFILER_DIR", None)
+    torch_profiler_dir: str | None = field(default_factory=lambda: os.getenv("ATOM_TORCH_PROFILER_DIR", None))
     compilation_config: CompilationConfig = field(default_factory=CompilationConfig)
     quant_config: QuantizationConfig = field(
         default_factory=lambda: QuantizationConfig()
