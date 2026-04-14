@@ -34,6 +34,7 @@ logger = logging.getLogger("atom")
 
 
 _ATOM_MODEL_CLASSES: dict[str, str] = {
+    "LlamaForCausalLM": "atom.models.llama:LlamaForCausalLM",
     "Qwen3ForCausalLM": "atom.models.qwen3:Qwen3ForCausalLM",
     "Qwen3MoeForCausalLM": "atom.models.qwen3_moe:Qwen3MoeForCausalLM",
     "GptOssForCausalLM": "atom.models.gpt_oss:GptOssForCausalLM",
@@ -42,6 +43,7 @@ _ATOM_MODEL_CLASSES: dict[str, str] = {
     "Qwen3NextForCausalLM": "atom.models.qwen3_next:Qwen3NextForCausalLM",
     "Qwen3_5MoeForConditionalGeneration": "atom.models.qwen3_5:Qwen3_5MoeForConditionalGeneration_",
     "Qwen3_5ForConditionalGeneration": "atom.models.qwen3_5:Qwen3_5ForConditionalGeneration_",
+    "KimiK25ForConditionalGeneration": "atom.plugin.vllm.models.kimi_k25:KimiK25ForConditionalGeneration_",
 }
 
 
@@ -94,6 +96,13 @@ class ATOMModelBase(nn.Module, VllmModel, SupportsQuant, SupportsPP):
 
         model_arch = vllm_config.model_config.architectures[0]
         model_cls = _get_atom_model_cls(model_arch)
+        module_remapping = getattr(model_cls, "packed_modules_mapping", {})
+        weights_mapper = getattr(model_cls, "hf_to_atom_mapper", {})
+        self.atom_config.quant_config.remap_layer_name(
+            self.atom_config.hf_config,
+            packed_modules_mapping=module_remapping,
+            weights_mapper=weights_mapper,
+        )
 
         logger.info(f"Construct ATOM model {model_arch} for vLLM plugin mode")
         self.model = model_cls(self.atom_config)
